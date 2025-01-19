@@ -1,0 +1,19 @@
+# Based on: https://github.com/systemd/systemd/blob/a153d7cbd20478fb2dad10d889863f8303542cf8/units/systemd-network-generator.service.in
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+[Unit]
+Description=Generate network units from Hetzner Cloud server metadata
+
+DefaultDependencies=no
+Before=network-pre.target systemd-udevd.service
+Wants=network-pre.target
+Conflicts=shutdown.target initrd-switch-root.target
+Before=shutdown.target initrd-switch-root.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart={{LIBEXECDIR}}/systemd-network-generator-hcloud
+
+[Install]
+WantedBy=sysinit.target
