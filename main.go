@@ -51,14 +51,18 @@ const (
 	ConfigSuffix = ".network"
 )
 
-func writeConfigs(entries []NetworkConfigEntry) {
+func writeConfigs(entries []NetworkConfigEntry) bool {
+	ok := true
+
 	if err := os.MkdirAll(ConfigDir, 0755); err != nil {
-		log.Fatalf("creating \"%s\": %v", ConfigDir, err)
+		log.Printf("creating \"%s\": %v", ConfigDir, err)
+		ok = false
 	}
 
 	// Clean up old configs.
 	if dirEntries, err := os.ReadDir(ConfigDir); err != nil {
-		log.Fatalf("reading directory \"%s\": %v", ConfigDir, err)
+		log.Printf("reading directory \"%s\": %v", ConfigDir, err)
+		ok = false
 	} else {
 		for _, dirEntry := range dirEntries {
 			name := dirEntry.Name()
@@ -66,6 +70,7 @@ func writeConfigs(entries []NetworkConfigEntry) {
 				configPath := ConfigDir + "/" + name
 				if err := os.Remove(configPath); err != nil {
 					log.Printf("removing \"%s\": %v", configPath, err)
+					ok = false
 				}
 			}
 		}
@@ -119,8 +124,11 @@ func writeConfigs(entries []NetworkConfigEntry) {
 		configPath := ConfigDir + "/" + ConfigPrefix + entry.Name + ConfigSuffix
 		if err := os.WriteFile(configPath, []byte(config), 0644); err != nil {
 			log.Printf("writing \"%s\": %v", configPath, err)
+			ok = false
 		}
 	}
+
+	return ok
 }
 
 func main() {
@@ -177,12 +185,13 @@ func main() {
 	}
 
 	// Fetch metadata.
-	var metadata Metadata
+	ok := false
 	client := &http.Client{
 		// Should respond quick, so reasonably short timeout.
 		// Don't want to immobilize system startup because of an outage.
 		Timeout: 10 * time.Second,
 	}
+	var metadata Metadata
 	if resp, err := client.Get("http://169.254.169.254/hetzner/v1/metadata"); err != nil {
 		log.Printf("fetching metadata: %v", err)
 	} else {
@@ -195,7 +204,7 @@ func main() {
 		} else if metadata.NetworkConfig.Version != 1 {
 			log.Printf("fetching metadata: unknown network-config version %d", metadata.NetworkConfig.Version)
 		} else {
-			writeConfigs(metadata.NetworkConfig.Config)
+			ok = writeConfigs(metadata.NetworkConfig.Config)
 		}
 		resp.Body.Close()
 	}
@@ -204,5 +213,9 @@ func main() {
 	if !haveLink && firstEn != nil {
 		netlink.AddrDel(firstEn, llAddr)
 		netlink.LinkSetDown(firstEn)
+	}
+
+	if !ok {
+		os.Exit(1)
 	}
 }
