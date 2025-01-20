@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -16,7 +17,9 @@ import (
 
 // Metadata is the YAML root structure of Hetzner Cloud metadata.
 type Metadata struct {
+	Hostname      string
 	NetworkConfig `yaml:"network-config"`
+	PublicKeys    []string `yaml:"public-keys"`
 }
 
 type NetworkConfig struct {
@@ -132,6 +135,12 @@ func writeConfigs(entries []NetworkConfigEntry) bool {
 }
 
 func main() {
+	writeMetadata := flag.String("write-metadata", "", "Write metadata to a file")
+	writeUserdata := flag.String("write-userdata", "", "Write userdata to a file")
+	writeHostname := flag.String("write-hostname", "", "Write the hostname to a file")
+	writePublicKeys := flag.String("write-public-keys", "", "Write the SSH public keys to a file")
+	flag.Parse()
+
 	// Check if we have link on an ethernet interface.
 	links, err := netlink.LinkList()
 	if err != nil {
@@ -199,14 +208,59 @@ func main() {
 			log.Printf("fetching metadata: unexpected http status %d", resp.StatusCode)
 		} else if body, err := io.ReadAll(resp.Body); err != nil {
 			log.Printf("fetching metadata: read error: %v", err)
-		} else if err := yaml.Unmarshal(body, &metadata); err != nil {
-			log.Printf("fetching metadata: parse error: %v", err)
-		} else if metadata.NetworkConfig.Version != 1 {
-			log.Printf("fetching metadata: unknown network-config version %d", metadata.NetworkConfig.Version)
 		} else {
-			ok = writeConfigs(metadata.NetworkConfig.Config)
+			if err := yaml.Unmarshal(body, &metadata); err != nil {
+				log.Printf("fetching metadata: parse error: %v", err)
+			} else {
+				if metadata.NetworkConfig.Version != 1 {
+					log.Printf("fetching metadata: unknown network-config version %d", metadata.NetworkConfig.Version)
+				} else {
+					ok = writeConfigs(metadata.NetworkConfig.Config)
+				}
+
+				if *writeHostname != "" {
+					if err := os.WriteFile(*writeHostname, []byte(metadata.Hostname+"\n"), 0600); err != nil {
+						log.Printf("writing \"%s\": %v", *writeHostname, err)
+						ok = false
+					}
+				}
+
+				if *writePublicKeys != "" {
+					out := ""
+					for _, key := range metadata.PublicKeys {
+						out += key + "\n"
+					}
+					if err := os.WriteFile(*writePublicKeys, []byte(out), 0600); err != nil {
+						log.Printf("writing \"%s\": %v", *writePublicKeys, err)
+						ok = false
+					}
+				}
+			}
+
+			if *writeMetadata != "" {
+				if err := os.WriteFile(*writeMetadata, body, 0600); err != nil {
+					log.Printf("writing \"%s\": %v", *writeMetadata, err)
+					ok = false
+				}
+			}
 		}
 		resp.Body.Close()
+	}
+
+	if *writeUserdata != "" {
+		userdataOk := false
+		if resp, err := client.Get("http://169.254.169.254/hetzner/v1/userdata"); err != nil {
+			log.Printf("fetching userdata: %v", err)
+		} else if resp.StatusCode != 200 {
+			log.Printf("fetching userdata: unexpected http status %d", resp.StatusCode)
+		} else if body, err := io.ReadAll(resp.Body); err != nil {
+			log.Printf("fetching userdata: read error: %v", err)
+		} else if err := os.WriteFile(*writeUserdata, body, 0600); err != nil {
+			log.Printf("writing \"%s\": %v", *writeUserdata, err)
+		} else {
+			userdataOk = true
+		}
+		ok = ok && userdataOk
 	}
 
 	// Bring down the interface again.
